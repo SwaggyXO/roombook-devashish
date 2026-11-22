@@ -1,4 +1,4 @@
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from typing import Protocol, Sequence
 
@@ -87,3 +87,35 @@ def slot_violations(
         violations.append(Violation.RESTRICTED_ROOM)
 
     return violations
+
+
+def find_slots(
+    day: date,
+    duration_minutes: int,
+    *,
+    room_name: str,
+    requester_role: Role,
+    room_bookings: Sequence[BookedSlot],
+    people_bookings: Sequence[BookedSlot],
+    policy: Policy = DEFAULT_POLICY,
+) -> list[tuple[datetime, datetime]]:
+    """The earliest valid slots on the day, up to policy.suggestion_limit."""
+    duration = timedelta(minutes=duration_minutes)
+    step = timedelta(minutes=policy.slot_step_minutes)
+    day_end = datetime.combine(day, policy.work_end)
+    start = datetime.combine(day, policy.work_start)
+    slots = []
+    while start + duration <= day_end and len(slots) < policy.suggestion_limit:
+        end = start + duration
+        if not slot_violations(
+            start,
+            end,
+            room_name=room_name,
+            requester_role=requester_role,
+            room_bookings=room_bookings,
+            people_bookings=people_bookings,
+            policy=policy,
+        ):
+            slots.append((start, end))
+        start += step
+    return slots
