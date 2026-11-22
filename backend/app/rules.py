@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import time
+from datetime import datetime, time, timedelta
 
 from .roles import Role
 
@@ -36,3 +36,9 @@ class Policy:
 
 
 DEFAULT_POLICY = Policy()
+
+
+def room_free_at(start: datetime, end: datetime, policy: Policy = DEFAULT_POLICY) -> datetime:
+    if end - start > timedelta(minutes=policy.buffer_threshold_minutes):
+        return end + timedelta(minutes=policy.buffer_minutes)
+    return end

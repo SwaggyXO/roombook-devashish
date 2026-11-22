@@ -50,6 +50,7 @@ class Booking(Base):
     title: Mapped[str] = mapped_column(String(200), default="")
     start: Mapped[datetime] = mapped_column(DateTime, index=True)
     end: Mapped[datetime] = mapped_column(DateTime)
+    room_free_at: Mapped[datetime] = mapped_column(DateTime)
 
     room: Mapped[Room] = relationship()
     creator: Mapped[User] = relationship()

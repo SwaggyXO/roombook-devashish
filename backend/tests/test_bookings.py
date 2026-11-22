@@ -1,3 +1,11 @@
+from datetime import datetime
+
+from sqlalchemy import select
+
+from app.models import Booking
+from app.rules import room_free_at
+
+
 def test_list_bookings_for_date(client):
     res = client.get("/bookings", params={"date": "2026-12-07"})
     assert res.status_code == 200
@@ -97,3 +105,30 @@ def test_unknown_attendee(client):
         },
     )
     assert res.status_code == 400
+
+
+def test_seed_stores_room_free_at(db):
+    bookings = db.scalars(select(Booking)).all()
+    assert bookings
+    for b in bookings:
+        assert b.room_free_at == room_free_at(b.start, b.end)
+
+    def free_at(title):
+        return db.scalars(select(Booking).where(Booking.title == title)).one().room_free_at
+
+    assert free_at("Hiring panel") == datetime(2026, 12, 7, 11, 45)
+    assert free_at("Standup sync") == datetime(2026, 12, 7, 12, 15)
+
+
+def test_create_booking_stores_room_free_at(client, db):
+    res = client.post(
+        "/bookings",
+        json={
+            "room_id": 3,
+            "creator_id": 2,
+            "start": "2026-12-07T09:30:00",
+            "end": "2026-12-07T10:45:00",
+        },
+    )
+    assert res.status_code == 201
+    assert db.get(Booking, res.json()["id"]).room_free_at == datetime(2026, 12, 7, 11, 0)

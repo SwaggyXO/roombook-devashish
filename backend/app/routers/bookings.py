@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session, selectinload
 
 from ..db import get_db
 from ..models import Booking, Room, User
+from ..rules import room_free_at
 from ..scheduling import overlaps
 from ..schemas import BookingIn, BookingOut
 
@@ -55,6 +56,7 @@ def create_booking(payload: BookingIn, db: Session = Depends(get_db)):
         title=payload.title,
         start=payload.start,
         end=payload.end,
+        room_free_at=room_free_at(payload.start, payload.end),
         attendees=list(attendees),
     )
     db.add(booking)

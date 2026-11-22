@@ -1,10 +1,10 @@
 from dataclasses import FrozenInstanceError
-from datetime import time
+from datetime import datetime, time, timedelta
 
 import pytest
 
 from app.roles import Role
-from app.rules import DEFAULT_POLICY, Policy
+from app.rules import DEFAULT_POLICY, Policy, room_free_at
 
 
 def test_default_policy_matches_spec():
@@ -41,3 +41,19 @@ def test_policy_is_data_and_immutable():
 def test_policy_rejects_invalid_values(bad):
     with pytest.raises(ValueError):
         Policy(**bad)
+
+
+@pytest.mark.parametrize(
+    "minutes, buffer",
+    [(30, 0), (60, 0), (75, 15), (240, 15)],
+)
+def test_room_free_at_adds_buffer_only_above_threshold(minutes, buffer):
+    start = datetime(2026, 12, 7, 10, 0)
+    end = start + timedelta(minutes=minutes)
+    assert room_free_at(start, end) == end + timedelta(minutes=buffer)
+
+
+def test_room_free_at_uses_custom_policy():
+    start = datetime(2026, 12, 7, 10, 0)
+    end = datetime(2026, 12, 7, 11, 30)
+    assert room_free_at(start, end, Policy(buffer_minutes=10)) == datetime(2026, 12, 7, 11, 40)

@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 from .db import Base, SessionLocal, engine
 from .models import Booking, Room, User
 from .roles import Role
+from .rules import room_free_at
 
 USERS = [
     (1, "Asha", Role.EMPLOYEE),
@@ -65,6 +66,7 @@ def seed(db: Session) -> None:
                 title=title,
                 start=_at(day, start),
                 end=_at(day, end),
+                room_free_at=room_free_at(_at(day, start), _at(day, end)),
                 attendees=[users[uid] for uid in attendee_ids],
             )
         )

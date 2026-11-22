@@ -21,6 +21,8 @@ python -m app.seed          # resets the database and loads sample data
 uvicorn app.main:app --reload
 ```
 
+After pulling schema changes, re-run `python -m app.seed`: `create_all` does not alter existing tables.
+
 The API runs on http://localhost:8000. Interactive docs are at http://localhost:8000/docs.
 
 ### Using PostgreSQL instead of SQLite
