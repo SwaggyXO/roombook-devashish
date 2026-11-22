@@ -42,3 +42,7 @@ def room_free_at(start: datetime, end: datetime, policy: Policy = DEFAULT_POLICY
     if end - start > timedelta(minutes=policy.buffer_threshold_minutes):
         return end + timedelta(minutes=policy.buffer_minutes)
     return end
+
+
+def can_book(role: Role, room_name: str, policy: Policy = DEFAULT_POLICY) -> bool:
+    return (room_name, role) not in policy.restricted
