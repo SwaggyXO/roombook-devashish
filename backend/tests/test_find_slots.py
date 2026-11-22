@@ -34,7 +34,7 @@ def booked(start, end, day=MONDAY):
 
 
 def slots(day=MONDAY, minutes=30, *, room="Focus Room", role=Role.EMPLOYEE,
-          room_bookings=(), people_bookings=(), policy=DEFAULT_POLICY):
+          room_bookings=(), people_bookings=(), after=None, policy=DEFAULT_POLICY):
     return find_slots(
         day,
         minutes,
@@ -42,6 +42,7 @@ def slots(day=MONDAY, minutes=30, *, room="Focus Room", role=Role.EMPLOYEE,
         requester_role=role,
         room_bookings=room_bookings,
         people_bookings=people_bookings,
+        after=after,
         policy=policy,
     )
 
@@ -99,6 +100,30 @@ def test_suggestion_limit_is_honoured():
     assert len(slots(policy=Policy(suggestion_limit=5))) == 5
 
 
+def test_after_skips_slots_up_to_and_including_it():
+    after = datetime.fromisoformat(f"{MONDAY}T09:45")
+    assert starts_and_ends(slots(after=after)) == [
+        ("10:00", "10:30"),
+        ("10:15", "10:45"),
+        ("10:30", "11:00"),
+    ]
+
+
+def test_after_between_grid_points_starts_at_the_next_one():
+    after = datetime.fromisoformat(f"{MONDAY}T09:40")
+    assert starts_and_ends(slots(after=after))[0] == ("09:45", "10:15")
+
+
+def test_after_on_an_earlier_day_changes_nothing():
+    after = datetime.fromisoformat("2026-12-04T18:00")
+    assert slots(after=after) == slots()
+
+
+def test_after_on_a_later_day_leaves_nothing():
+    after = datetime.fromisoformat("2026-12-08T09:30")
+    assert slots(after=after) == []
+
+
 def test_intern_gets_nothing_for_the_board_room():
     assert slots(room="Board Room", role=Role.INTERN) == []
 
@@ -153,3 +178,8 @@ def test_find_slots_returns_exactly_the_first_valid_slots(day, minutes, room, ro
         if slot_violations(s, s + minutes * MINUTE, **kwargs) == []
     ]
     assert result == valid[: DEFAULT_POLICY.suggestion_limit]
+
+    after = data.draw(st.sampled_from([s for s, _ in valid] or [first]))
+    assert find_slots(day, minutes, after=after, **kwargs) == [
+        item for item in valid if item[0] > after
+    ][: DEFAULT_POLICY.suggestion_limit]

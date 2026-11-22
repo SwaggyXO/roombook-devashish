@@ -9,14 +9,25 @@ from ..db import get_db
 from ..models import Room, User
 from ..rules import can_book
 from ..scheduling import find_slots
-from ..schemas import RoomIn, RoomOut, SlotOut, SuggestIn, SuggestOut
+from ..schemas import RoomAccessOut, RoomIn, RoomOut, SlotOut, SuggestIn, SuggestOut
 
 router = APIRouter(prefix="/rooms", tags=["rooms"])
 
 
-@router.get("", response_model=list[RoomOut])
-def list_rooms(db: Session = Depends(get_db)):
-    return db.scalars(select(Room).order_by(Room.id)).all()
+@router.get("", response_model=list[RoomAccessOut], response_model_exclude_none=True)
+def list_rooms(user_id: int | None = None, db: Session = Depends(get_db)):
+    rooms = db.scalars(select(Room).order_by(Room.id)).all()
+    if user_id is None:
+        return rooms
+    user = db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return [
+        RoomAccessOut.model_validate(room).model_copy(
+            update={"bookable": can_book(user.role, room.name)}
+        )
+        for room in rooms
+    ]
 
 
 @router.get("/{room_id}", response_model=RoomOut)
@@ -64,6 +75,7 @@ def suggest_slots(room_id: int, payload: SuggestIn, db: Session = Depends(get_db
         payload.duration_minutes,
         room_name=room.name,
         requester_role=requester.role,
+        after=payload.after,
         room_bookings=room_bookings(db, room.id, payload.date),
         people_bookings=people_bookings(db, attendee_ids | {requester.id}, payload.date),
     )
