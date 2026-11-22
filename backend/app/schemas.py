@@ -26,6 +26,10 @@ class RoomOut(RoomIn):
     id: int
 
 
+class RoomAccessOut(RoomOut):
+    bookable: bool | None = None
+
+
 class BookingIn(BaseModel):
     room_id: int
     creator_id: int
@@ -58,6 +62,7 @@ class SuggestIn(BaseModel):
     attendee_ids: list[int] = Field(default_factory=list)
     duration_minutes: int
     date: dt.date
+    after: OfficeTime | None = None
 
     @field_validator("duration_minutes")
     @classmethod
@@ -75,3 +80,4 @@ class SlotOut(BaseModel):
 
 class SuggestOut(BaseModel):
     slots: list[SlotOut]
+    has_more: bool

@@ -94,9 +94,13 @@ def find_slots(
     requester_role: Role,
     room_bookings: Sequence[BookedSlot],
     people_bookings: Sequence[BookedSlot],
+    after: datetime | None = None,
     policy: Policy = DEFAULT_POLICY,
 ) -> list[tuple[datetime, datetime]]:
-    """The earliest valid slots on the day, up to policy.suggestion_limit."""
+    """The earliest valid slots on the day, up to policy.suggestion_limit.
+
+    With after set, only slots starting strictly after it are returned.
+    """
     duration = timedelta(minutes=duration_minutes)
     step = timedelta(minutes=policy.slot_step_minutes)
     day_end = datetime.combine(day, policy.work_end)
@@ -104,7 +108,7 @@ def find_slots(
     slots = []
     while start + duration <= day_end and len(slots) < policy.suggestion_limit:
         end = start + duration
-        if not slot_violations(
+        if (after is None or start > after) and not slot_violations(
             start,
             end,
             room_name=room_name,

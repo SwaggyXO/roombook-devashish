@@ -2,19 +2,33 @@ import { useEffect, useState } from "react";
 import { getBookings } from "../api.js";
 import { formatTime } from "../dates.js";
 
-export default function BookingList({ date }) {
-  const [bookings, setBookings] = useState([]);
+export default function BookingList({ date, refreshKey }) {
+  const [loaded, setLoaded] = useState({ date: null, bookings: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
 
   useEffect(() => {
+    let ignore = false;
     setLoading(true);
     setError(null);
     getBookings(date)
-      .then(setBookings)
-      .catch((err) => setError(err.message))
-      .finally(() => setLoading(false));
-  }, [date]);
+      .then((data) => {
+        if (!ignore) setLoaded({ date, bookings: data });
+      })
+      .catch((err) => {
+        if (ignore) return;
+        setLoaded({ date, bookings: [] });
+        setError(err.message);
+      })
+      .finally(() => {
+        if (!ignore) setLoading(false);
+      });
+    return () => {
+      ignore = true;
+    };
+  }, [date, refreshKey]);
+
+  const bookings = loaded.date === date ? loaded.bookings : [];
 
   return (
     <section className="card">
