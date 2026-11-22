@@ -1,9 +1,11 @@
 from datetime import datetime
 
 from sqlalchemy import Column, DateTime, ForeignKey, String, Table
+from sqlalchemy import Enum as SAEnum
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .db import Base
+from .roles import Role
 
 booking_attendees = Table(
     "booking_attendees",
@@ -18,7 +20,17 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
-    role: Mapped[str] = mapped_column(String(20), default="employee")
+    role: Mapped[Role] = mapped_column(
+        SAEnum(
+            Role,
+            native_enum=False,
+            values_callable=lambda roles: [r.value for r in roles],
+            length=20,
+            validate_strings=True,
+            create_constraint=True,
+        ),
+        default=Role.EMPLOYEE,
+    )
 
 
 class Room(Base):

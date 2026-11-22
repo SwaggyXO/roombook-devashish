@@ -9,14 +9,15 @@ from sqlalchemy.orm import Session
 
 from .db import Base, SessionLocal, engine
 from .models import Booking, Room, User
+from .roles import Role
 
 USERS = [
-    (1, "Asha", "employee"),
-    (2, "Ben", "employee"),
-    (3, "Chen", "manager"),
-    (4, "Divya", "intern"),
-    (5, "Eli", "employee"),
-    (6, "Farah", "employee"),
+    (1, "Asha", Role.EMPLOYEE),
+    (2, "Ben", Role.EMPLOYEE),
+    (3, "Chen", Role.MANAGER),
+    (4, "Divya", Role.INTERN),
+    (5, "Eli", Role.EMPLOYEE),
+    (6, "Farah", Role.EMPLOYEE),
 ]
 
 ROOMS = [

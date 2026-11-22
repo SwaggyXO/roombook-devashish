@@ -1,9 +1,8 @@
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Role = Literal["employee", "manager", "intern"]
+from .roles import Role
 
 
 class UserOut(BaseModel):
