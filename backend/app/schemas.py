@@ -1,7 +1,6 @@
-from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
-
+from .office_time import OfficeTime, OfficeTimeOut
 from .roles import Role
 
 
@@ -29,13 +28,8 @@ class BookingIn(BaseModel):
     creator_id: int
     title: str = Field(default="", max_length=200)
     attendee_ids: list[int] = Field(default_factory=list)
-    start: datetime
-    end: datetime
-
-    @field_validator("start", "end")
-    @classmethod
-    def normalise_datetime(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=None, second=0, microsecond=0)
+    start: OfficeTime
+    end: OfficeTime
 
     @model_validator(mode="after")
     def check_order(self) -> "BookingIn":
@@ -52,5 +46,5 @@ class BookingOut(BaseModel):
     room: RoomOut
     creator_id: int
     attendees: list[UserOut]
-    start: datetime
-    end: datetime
+    start: OfficeTimeOut
+    end: OfficeTimeOut
