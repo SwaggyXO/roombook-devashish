@@ -1,9 +1,10 @@
-from datetime import datetime
-from typing import Literal
+import datetime as dt
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-Role = Literal["employee", "manager", "intern"]
+from .office_time import OfficeTime, OfficeTimeOut
+from .roles import Role
+from .rules import duration_error
 
 
 class UserOut(BaseModel):
@@ -30,13 +31,8 @@ class BookingIn(BaseModel):
     creator_id: int
     title: str = Field(default="", max_length=200)
     attendee_ids: list[int] = Field(default_factory=list)
-    start: datetime
-    end: datetime
-
-    @field_validator("start", "end")
-    @classmethod
-    def normalise_datetime(cls, value: datetime) -> datetime:
-        return value.replace(tzinfo=None, second=0, microsecond=0)
+    start: OfficeTime
+    end: OfficeTime
 
     @model_validator(mode="after")
     def check_order(self) -> "BookingIn":
@@ -53,5 +49,29 @@ class BookingOut(BaseModel):
     room: RoomOut
     creator_id: int
     attendees: list[UserOut]
-    start: datetime
-    end: datetime
+    start: OfficeTimeOut
+    end: OfficeTimeOut
+
+
+class SuggestIn(BaseModel):
+    requester_id: int
+    attendee_ids: list[int] = Field(default_factory=list)
+    duration_minutes: int
+    date: dt.date
+
+    @field_validator("duration_minutes")
+    @classmethod
+    def check_duration(cls, value: int) -> int:
+        error = duration_error(value)
+        if error:
+            raise ValueError(error)
+        return value
+
+
+class SlotOut(BaseModel):
+    start: OfficeTimeOut
+    end: OfficeTimeOut
+
+
+class SuggestOut(BaseModel):
+    slots: list[SlotOut]

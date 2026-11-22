@@ -21,6 +21,8 @@ python -m app.seed          # resets the database and loads sample data
 uvicorn app.main:app --reload
 ```
 
+After pulling schema changes, re-run `python -m app.seed`: `create_all` does not alter existing tables.
+
 The API runs on http://localhost:8000. Interactive docs are at http://localhost:8000/docs.
 
 ### Using PostgreSQL instead of SQLite
@@ -86,7 +88,8 @@ Open http://localhost:5173. The dev server proxies `/api/*` to the backend on po
 | POST | `/rooms` | `{name, capacity}` |
 | GET | `/users` | |
 | GET | `/bookings?date=YYYY-MM-DD&room_id=` | Both filters optional |
-| POST | `/bookings` | `{room_id, creator_id, title, attendee_ids, start, end}`; returns `409` if the room is taken |
+| POST | `/bookings` | `{room_id, creator_id, title, attendee_ids, start, end}`; the creator is added as an attendee. Returns `403` for a restricted room, `422` for a broken office rule, `409` if the room or an attendee is busy |
+| POST | `/rooms/{id}/suggest` | `{requester_id, attendee_ids, duration_minutes, date}`; returns up to 3 earliest valid `{start, end}` slots that day. `403` if the requester can't book the room |
 
 ### Examples
 
@@ -99,4 +102,10 @@ curl -s -X POST localhost:8000/bookings \
   -H 'Content-Type: application/json' \
   -d '{"room_id": 3, "creator_id": 2, "title": "Pairing", "attendee_ids": [2],
        "start": "2026-12-07T12:15:00+05:30", "end": "2026-12-07T12:45:00+05:30"}'
+```
+
+```bash
+curl -s -X POST localhost:8000/rooms/3/suggest \
+  -H 'Content-Type: application/json' \
+  -d '{"requester_id": 3, "attendee_ids": [1, 2], "duration_minutes": 45, "date": "2026-12-07"}'
 ```
