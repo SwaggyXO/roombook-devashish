@@ -14,7 +14,7 @@ The task is in [ASSIGNMENT.md](ASSIGNMENT.md).
 
 ```bash
 cd backend
-python3 -m venv .venv
+python3 -m venv .venv   # on Windows: python -m venv .venv
 source .venv/bin/activate   # on Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python -m app.seed          # resets the database and loads sample data
@@ -27,7 +27,7 @@ The API runs on http://localhost:8000. Interactive docs are at http://localhost:
 
 ```bash
 docker compose up -d
-export DATABASE_URL=postgresql+psycopg://roombook:roombook@localhost:5432/roombook
+export DATABASE_URL=postgresql+psycopg://roombook:roombook@localhost:5432/roombook   # PowerShell: $env:DATABASE_URL="postgresql+psycopg://roombook:roombook@localhost:5432/roombook"
 python -m app.seed
 uvicorn app.main:app --reload
 ```
