@@ -1,3 +1,4 @@
+import os
 import threading
 from datetime import datetime
 
@@ -23,18 +24,52 @@ HUDDLE = 3
 FREE_DAY = "2026-12-08"
 
 
-@pytest.fixture
-def file_session_factory(tmp_path):
-    engine = create_engine(
-        f"sqlite:///{tmp_path / 'race.db'}",
-        connect_args={"check_same_thread": False, "timeout": 30},
-    )
+POSTGRES_URL = os.getenv("TEST_POSTGRES_URL")
+BACKENDS = [
+    "sqlite",
+    pytest.param(
+        "postgres",
+        marks=pytest.mark.skipif(
+            not POSTGRES_URL, reason="set TEST_POSTGRES_URL to also run against Postgres"
+        ),
+    ),
+]
+
+
+@pytest.fixture(params=BACKENDS)
+def engine(request, tmp_path):
+    if request.param == "sqlite":
+        engine = create_engine(
+            f"sqlite:///{tmp_path / 'race.db'}",
+            connect_args={"check_same_thread": False, "timeout": 30},
+        )
+    else:
+        engine = create_engine(POSTGRES_URL)
+        Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
+    yield engine
+    engine.dispose()
+
+
+@pytest.fixture
+def overlap_error(engine):
+    if engine.dialect.name == "sqlite":
+        return ROOM_ALREADY_BOOKED
+    return "bookings_no_room_overlap"
+
+
+@pytest.fixture
+def file_session_factory(engine):
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     with factory() as db:
         seed(db)
-    yield factory
-    engine.dispose()
+    return factory
+
+
+@pytest.fixture
+def guarded_db(file_session_factory):
+    with file_session_factory() as session:
+        yield session
 
 
 @pytest.fixture
@@ -58,8 +93,10 @@ def test_simultaneous_overlapping_bookings_allow_exactly_one(file_client, file_s
 
     @event.listens_for(file_session_factory, "before_flush")
     def wait_for_other_request_before_insert(session, flush_context, instances):
-        arrivals.append(threading.current_thread().name)
-        both_ready_to_insert.wait()
+        thread_id = threading.get_ident()
+        if thread_id not in arrivals:
+            arrivals.append(thread_id)
+            both_ready_to_insert.wait()
 
     requests = [
         {"creator_id": ASHA, "start": f"{FREE_DAY}T10:00:00", "end": f"{FREE_DAY}T10:30:00"},
@@ -117,108 +154,112 @@ def make_booking(room_id, start_time, end_time, day=DAY):
     )
 
 
-def test_database_rejects_overlapping_booking_in_same_room(db):
-    db.add(make_booking(FOCUS_ROOM, "10:30", "11:00"))
-    with pytest.raises(IntegrityError, match=ROOM_ALREADY_BOOKED):
-        db.commit()
+def test_database_rejects_overlapping_booking_in_same_room(guarded_db, overlap_error):
+    guarded_db.add(make_booking(FOCUS_ROOM, "10:30", "11:00"))
+    with pytest.raises(IntegrityError, match=overlap_error):
+        guarded_db.commit()
 
 
-def test_database_rejects_booking_inside_cleaning_window(db):
+def test_database_rejects_booking_inside_cleaning_window(guarded_db, overlap_error):
     # The Hiring panel (10:00-11:30, Focus Room) keeps the room busy until 11:45.
-    db.add(make_booking(FOCUS_ROOM, "11:30", "12:00"))
-    with pytest.raises(IntegrityError, match=ROOM_ALREADY_BOOKED):
-        db.commit()
+    guarded_db.add(make_booking(FOCUS_ROOM, "11:30", "12:00"))
+    with pytest.raises(IntegrityError, match=overlap_error):
+        guarded_db.commit()
 
 
-def direct_inserts(db):
-    return db.scalar(select(func.count()).select_from(Booking).where(Booking.title == "Direct insert"))
+def direct_inserts(guarded_db):
+    return guarded_db.scalar(select(func.count()).select_from(Booking).where(Booking.title == "Direct insert"))
 
 
-def test_database_rejects_booking_whose_own_cleaning_overlaps_next_meeting(db):
+def test_database_rejects_booking_whose_own_cleaning_overlaps_next_meeting(guarded_db, overlap_error):
     # 13:45-15:00 is over 60 minutes, so the room stays busy until 15:15, past the 15:00 Quarterly review.
-    db.add(make_booking(BOARD_ROOM, "13:45", "15:00"))
-    with pytest.raises(IntegrityError, match=ROOM_ALREADY_BOOKED):
-        db.commit()
+    guarded_db.add(make_booking(BOARD_ROOM, "13:45", "15:00"))
+    with pytest.raises(IntegrityError, match=overlap_error):
+        guarded_db.commit()
 
 
-def test_database_allows_booking_ending_exactly_when_next_meeting_starts(db):
-    db.add(make_booking(BOARD_ROOM, "14:30", "15:00"))
-    db.commit()
-    assert direct_inserts(db) == 1
+def test_database_allows_booking_ending_exactly_when_next_meeting_starts(guarded_db):
+    guarded_db.add(make_booking(BOARD_ROOM, "14:30", "15:00"))
+    guarded_db.commit()
+    assert direct_inserts(guarded_db) == 1
 
 
-def test_database_allows_booking_starting_when_room_is_free_again(db):
-    db.add(make_booking(FOCUS_ROOM, "11:45", "12:15"))
-    db.commit()
-    assert direct_inserts(db) == 1
+def test_database_allows_booking_starting_when_room_is_free_again(guarded_db):
+    guarded_db.add(make_booking(FOCUS_ROOM, "11:45", "12:15"))
+    guarded_db.commit()
+    assert direct_inserts(guarded_db) == 1
 
 
-def test_database_allows_same_time_in_different_room(db):
-    db.add(make_booking(BOARD_ROOM, "10:00", "11:30", day="2026-12-08"))
-    db.add(make_booking(HUDDLE, "10:00", "11:30", day="2026-12-08"))
-    db.commit()
-    assert direct_inserts(db) == 2
+def test_database_allows_same_time_in_different_room(guarded_db):
+    guarded_db.add(make_booking(BOARD_ROOM, "10:00", "11:30", day="2026-12-08"))
+    guarded_db.add(make_booking(HUDDLE, "10:00", "11:30", day="2026-12-08"))
+    guarded_db.commit()
+    assert direct_inserts(guarded_db) == 2
 
 
-def test_database_rejects_update_that_moves_booking_into_overlap(db):
+def test_database_rejects_update_that_moves_booking_into_overlap(guarded_db, overlap_error):
     booking = make_booking(FOCUS_ROOM, "12:00", "12:30")
-    db.add(booking)
-    db.commit()
+    guarded_db.add(booking)
+    guarded_db.commit()
     moved = make_booking(FOCUS_ROOM, "10:30", "11:00")
     booking.start, booking.end, booking.room_free_at = moved.start, moved.end, moved.room_free_at
-    with pytest.raises(IntegrityError, match=ROOM_ALREADY_BOOKED):
-        db.commit()
+    with pytest.raises(IntegrityError, match=overlap_error):
+        guarded_db.commit()
 
 
-def test_database_allows_update_that_overlaps_only_the_bookings_own_old_time(db):
+def test_database_allows_update_that_overlaps_only_the_bookings_own_old_time(guarded_db):
     booking = make_booking(FOCUS_ROOM, "12:00", "12:30")
-    db.add(booking)
-    db.commit()
+    guarded_db.add(booking)
+    guarded_db.commit()
     moved = make_booking(FOCUS_ROOM, "12:15", "12:45")
     booking.start, booking.end, booking.room_free_at = moved.start, moved.end, moved.room_free_at
-    db.commit()
-    assert db.scalar(select(Booking.start).where(Booking.id == booking.id)) == moved.start
+    guarded_db.commit()
+    assert guarded_db.scalar(select(Booking.start).where(Booking.id == booking.id)) == moved.start
 
 
-def test_startup_adds_guards_to_a_database_created_without_them(tmp_path):
-    engine = create_engine(f"sqlite:///{tmp_path / 'old.db'}")
-    try:
-        Base.metadata.create_all(bind=engine)
-        with engine.begin() as connection:
+def test_startup_adds_guards_to_a_database_created_without_them(
+    engine, file_session_factory, overlap_error
+):
+    with engine.begin() as connection:
+        if engine.dialect.name == "sqlite":
             connection.execute(text("DROP TRIGGER bookings_no_room_overlap_insert"))
             connection.execute(text("DROP TRIGGER bookings_no_room_overlap_update"))
-        factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
-        with factory() as session:
-            seed(session)
+        else:
+            connection.execute(text("ALTER TABLE bookings DROP CONSTRAINT bookings_no_room_overlap"))
 
-        create_schema(engine)
+    create_schema(engine)
 
-        with factory() as session:
-            session.add(make_booking(FOCUS_ROOM, "10:30", "11:00"))
-            with pytest.raises(IntegrityError, match=ROOM_ALREADY_BOOKED):
-                session.commit()
-    finally:
-        engine.dispose()
+    with file_session_factory() as session:
+        session.add(make_booking(FOCUS_ROOM, "10:30", "11:00"))
+        with pytest.raises(IntegrityError, match=overlap_error):
+            session.commit()
 
 
 def test_integrity_error_unrelated_to_room_clash_is_not_reported_as_409(
-    file_client, file_session_factory
+    engine, file_client, file_session_factory
 ):
-    with file_session_factory() as db:
-        db.execute(
-            text(
-                """
-                CREATE TRIGGER test_only_unrelated_constraint BEFORE INSERT ON bookings
-                WHEN NEW.title = 'Unrelated failure'
-                BEGIN
-                    SELECT RAISE(ABORT, 'unrelated constraint');
-                END
-                """
+    with engine.begin() as connection:
+        if engine.dialect.name == "sqlite":
+            connection.execute(
+                text(
+                    """
+                    CREATE TRIGGER test_only_unrelated_constraint BEFORE INSERT ON bookings
+                    WHEN NEW.title = 'Unrelated failure'
+                    BEGIN
+                        SELECT RAISE(ABORT, 'test_only_unrelated_constraint');
+                    END
+                    """
+                )
             )
-        )
-        db.commit()
+        else:
+            connection.execute(
+                text(
+                    "ALTER TABLE bookings ADD CONSTRAINT test_only_unrelated_constraint "
+                    "CHECK (title <> 'Unrelated failure')"
+                )
+            )
 
-    with pytest.raises(IntegrityError, match="unrelated constraint"):
+    with pytest.raises(IntegrityError, match="test_only_unrelated_constraint"):
         file_client.post(
             "/bookings",
             json={
@@ -230,3 +271,60 @@ def test_integrity_error_unrelated_to_room_clash_is_not_reported_as_409(
                 "end": f"{FREE_DAY}T10:30:00",
             },
         )
+
+
+@pytest.fixture
+def deadlock_once_on_insert(engine):
+    drop_statements = (
+        "DROP TRIGGER IF EXISTS test_only_deadlock_once ON bookings",
+        "DROP FUNCTION IF EXISTS test_only_raise_deadlock_once()",
+        "DROP SEQUENCE IF EXISTS test_only_deadlock_once_calls",
+    )
+    with engine.begin() as connection:
+        for statement in drop_statements:
+            connection.execute(text(statement))
+        connection.execute(text("CREATE SEQUENCE test_only_deadlock_once_calls"))
+        connection.execute(
+            text(
+                """
+                CREATE FUNCTION test_only_raise_deadlock_once() RETURNS trigger AS $$
+                BEGIN
+                    IF nextval('test_only_deadlock_once_calls') = 1 THEN
+                        RAISE EXCEPTION 'simulated deadlock' USING ERRCODE = '40P01';
+                    END IF;
+                    RETURN NEW;
+                END
+                $$ LANGUAGE plpgsql
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                CREATE TRIGGER test_only_deadlock_once BEFORE INSERT ON bookings
+                FOR EACH ROW EXECUTE FUNCTION test_only_raise_deadlock_once()
+                """
+            )
+        )
+    yield
+    with engine.begin() as connection:
+        for statement in drop_statements:
+            connection.execute(text(statement))
+
+
+@pytest.mark.parametrize("engine", [BACKENDS[1]], indirect=True)
+def test_booking_is_retried_after_postgres_reports_a_deadlock(
+    file_client, deadlock_once_on_insert
+):
+    res = file_client.post(
+        "/bookings",
+        json={
+            "room_id": HUDDLE,
+            "creator_id": ASHA,
+            "title": "Retried",
+            "attendee_ids": [ASHA],
+            "start": f"{FREE_DAY}T10:00:00",
+            "end": f"{FREE_DAY}T10:30:00",
+        },
+    )
+    assert res.status_code == 201

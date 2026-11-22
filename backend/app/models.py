@@ -79,30 +79,45 @@ END
 """
 
 
+_POSTGRES_EXCLUSION_CONSTRAINT = """
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'bookings'::regclass AND conname = 'bookings_no_room_overlap') THEN
+        ALTER TABLE bookings ADD CONSTRAINT bookings_no_room_overlap
+            EXCLUDE USING gist (room_id WITH =, tsrange(start, room_free_at, '[)') WITH &&);
+    END IF;
+END
+$$
+"""
+
+
 def install_booking_guards(connection: Connection) -> None:
-    """SQLite has no exclusion constraints, so triggers refuse overlapping room windows instead."""
-    for name, trigger_event, other_rows_only in _BOOKING_GUARDS:
-        connection.execute(
-            text(
-                _TRIGGER.format(
-                    name=name,
-                    trigger_event=trigger_event,
-                    message=messages.ROOM_ALREADY_BOOKED,
-                    other_rows_only=other_rows_only,
+    """Make the database itself refuse two bookings whose room windows overlap."""
+    if connection.dialect.name == "postgresql":
+        connection.execute(text("CREATE EXTENSION IF NOT EXISTS btree_gist"))
+        connection.execute(text(_POSTGRES_EXCLUSION_CONSTRAINT))
+    elif connection.dialect.name == "sqlite":
+        # SQLite has no exclusion constraints, so triggers refuse overlapping room windows instead.
+        for name, trigger_event, other_rows_only in _BOOKING_GUARDS:
+            connection.execute(
+                text(
+                    _TRIGGER.format(
+                        name=name,
+                        trigger_event=trigger_event,
+                        message=messages.ROOM_ALREADY_BOOKED,
+                        other_rows_only=other_rows_only,
+                    )
                 )
             )
-        )
 
 
 @event.listens_for(Booking.__table__, "after_create")
 def _install_guards_on_create(target, connection, **kwargs):
-    if connection.dialect.name == "sqlite":
-        install_booking_guards(connection)
+    install_booking_guards(connection)
 
 
 def create_schema(engine: Engine) -> None:
     """Create missing tables, and add the guards to databases created before they existed."""
     Base.metadata.create_all(bind=engine)
-    if engine.dialect.name == "sqlite":
-        with engine.begin() as connection:
-            install_booking_guards(connection)
+    with engine.begin() as connection:
+        install_booking_guards(connection)

@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, selectinload
 
 from .. import messages
@@ -65,6 +66,29 @@ def rejections(
     }
 
 
+DEADLOCK_RETRIES = 2
+POSTGRES_DEADLOCK_DETECTED = "40P01"
+
+
+def commit_booking(db: Session, make_booking: Callable[[], Booking]) -> Booking:
+    """Insert a new booking, trying again if Postgres picks this request as a deadlock victim.
+
+    Two simultaneous clashing inserts can wait on each other's exclusion check. Postgres ends one
+    of them with a deadlock error, and the retry then fails the normal way, as a room clash.
+    """
+    for attempt in range(DEADLOCK_RETRIES + 1):
+        booking = make_booking()
+        db.add(booking)
+        try:
+            db.commit()
+            return booking
+        except OperationalError as error:
+            db.rollback()
+            is_deadlock = getattr(error.orig, "sqlstate", None) == POSTGRES_DEADLOCK_DETECTED
+            if not is_deadlock or attempt == DEADLOCK_RETRIES:
+                raise
+
+
 @router.post("", response_model=BookingOut, status_code=201)
 def create_booking(payload: BookingIn, db: Session = Depends(get_db)):
     room = db.get(Room, payload.room_id)
@@ -98,18 +122,20 @@ def create_booking(payload: BookingIn, db: Session = Depends(get_db)):
                 raise HTTPException(status_code=status, detail="; ".join(details))
 
     free_at = room_free_at(payload.start, payload.end)
-    booking = Booking(
-        room_id=room.id,
-        creator_id=creator.id,
-        title=payload.title,
-        start=payload.start,
-        end=payload.end,
-        room_free_at=free_at,
-        attendees=list(attendees),
-    )
-    db.add(booking)
+
+    def make_booking() -> Booking:
+        return Booking(
+            room_id=room.id,
+            creator_id=creator.id,
+            title=payload.title,
+            start=payload.start,
+            end=payload.end,
+            room_free_at=free_at,
+            attendees=list(attendees),
+        )
+
     try:
-        db.commit()
+        booking = commit_booking(db, make_booking)
     except IntegrityError:
         db.rollback()
         room_is_taken = any(
