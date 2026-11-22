@@ -25,6 +25,13 @@
 - The guarantee covers the room, including its cleaning time. Two bookings clash if their room windows overlap, where a window runs from the start to the time the room is free again. For example, with the Hiring panel in the Focus Room until 11:30 and cleaning until 11:45, a booking starting at 11:30 is refused, and one starting at 11:45 is allowed.
 - The request that loses gets a 409 with the same message as an ordinary clash ("Room is already booked for that time"), so a client can't tell which of the two happened.
 
+### Task 4
+
+- There is no login, so the form has a "Booking as" picker, and whoever is picked is the person making the booking.
+- Bookings made from the form are titled "Meeting". The form has no title field, because the task is about finding and taking a slot.
+- The form opens on 2026-12-07, the first day with seeded bookings, so the example from the task works straight away.
+- After a booking, the booking list jumps to the day that was booked, so the new booking is visible without clicking through dates.
+
 ## Trade-offs
 
 - **Office rules live in one object.** Every rule (working hours, lunch, buffer, which roles can use which rooms, and so on) is a field on a single `Policy` in `backend/app/rules.py`, and the functions that check bookings take it as an argument. I kept the rules in code rather than in environment variables or a database table, so changing a rule goes through review and tests like any other change. If rules ever need to differ per office, a `Policy` can be built from a database row without changing the checking code.
@@ -62,6 +69,16 @@
 8. On SQLite, a request waits up to 5 seconds (the default) for the write lock. Under heavy load it gives up with "database is locked", and that becomes a 500.
 9. The guarantee only covers bookings stored in this database. It cannot stop a clash with bookings made somewhere else, such as a synced calendar.
 
+### Task 4: the "Find a slot" form
+
+- **The server says which rooms a person can book.** `GET /rooms?user_id=` adds `bookable` to each room, using the same `can_book` rule that `/suggest` and `POST /bookings` use. The form greys out rooms the person can't book and says why (for example "Board Room (not available to interns)"). The alternative was to copy the intern rule into the frontend, where it would drift out of step the first time the rule changed. Without `user_id` the response is exactly what it was before.
+- **More slots come in pages, fetched with a cursor.** Below the slots there are "← Previous" and "Next →" buttons. I first built a "Show more" button that made the list longer, then changed it to pages so the list stays short and you can go back and forth. "Next" sends `after`, the start time of the last slot on the current page, and the server returns the slots after that time. If someone books a slot between two clicks, page numbers would skip or repeat slots, and a cursor doesn't. Pages already seen are kept, so "Previous" doesn't ask the server again. The server also returns `has_more`, so the form doesn't need to know that a page is 3 slots; it finds out by asking for one extra slot and dropping it. If a next page comes back empty because someone booked the rest in the meantime, the form stays on the current page and says there are no more free slots. I didn't load every slot up front to show numbered pages: that would need many requests, or a way round the "first 3" rule in the spec.
+- **When someone else takes the slot first, the form says so and refreshes.** A 409 on booking shows "That slot is no longer free", followed by the server's reason (the room or an attendee is busy), and the form fetches fresh suggestions on its own. The booking list also reloads, so the other person's booking is visible.
+- **The whole form is disabled while any request is running** (searching, changing page or booking). This stops double clicks from sending two bookings, and it stops changes to the inputs while suggestions for the old inputs are on their way.
+- **Late answers are ignored.** If a response arrives after the user has moved on, it is dropped, so suggestions for old inputs never appear. The same fix is in the booking list.
+- **Plain JSX and CSS, no new libraries**, as the task asks.
+- **No frontend unit tests.** The behaviour that matters is in the browser, so I checked it in a real browser: the example from the task gives 12:15, 14:00 and 14:15; ticking Ben changes the suggestions; the Board Room is greyed out for the intern; "Next" and "Previous" move through four pages of slots for the day, and "Previous" is instant; booking refreshes the list and moves it to the booked day; when a second client books a suggested slot first and the form then tries to book it, the form shows the "no longer free" message with fresh suggestions; the form stays disabled while a request runs; and a 375px wide screen has no sideways scrolling. The rules themselves are covered by the backend tests.
+
 ## Other problems
 
 Problems I found while reading the starter code, most serious first. Each one says where it is and whether a later PR fixes it. The ones without a fix are still open.
@@ -69,8 +86,8 @@ Problems I found while reading the starter code, most serious first. Each one sa
 - **High**: incoming times lose their timezone without being converted (`replace(tzinfo=None)`), so 10:00 UTC is saved as 10:00 IST, and responses have no timezone. Fixed in PR 2: times are converted to IST on the way in and always sent back with `+05:30` (`backend/app/office_time.py:12`).
 - **High**: `create_booking` checks for a clash and then saves, so two requests at the same moment can both pass the check and both be saved. Fixed in PR 3: the database now refuses the second booking (`backend/app/models.py:94`), and `create_booking` turns that refusal into a 409 (`backend/app/routers/bookings.py:139`).
 - **High**: `POST /bookings` doesn't check attendees, working hours, weekdays, the 15-minute grid, meeting length or the intern rule, so it accepts bookings the office rules forbid. Fixed in PR 2: it now runs the same checks as `/suggest` (`backend/app/routers/bookings.py:108`).
-- **Medium**: the booking list can show the wrong day. Requests are slowed down on purpose (up to 800 ms), so if you click through dates quickly, an older response can arrive last and replace the newer one. The list also keeps showing the previous day's bookings while a new day loads or after an error. `frontend/src/components/BookingList.jsx:10-17`. Planned for PR 4.
-- **Medium**: the API trusts whatever `creator_id` it's sent, so anyone can book as anyone, and the creator wasn't added as an attendee. `backend/app/schemas.py:31`. The attendee part is fixed in PR 2 (`backend/app/routers/bookings.py:105-106`). Checking who is really making the request is still open.
+- **Medium**: the booking list can show the wrong day. Requests are slowed down on purpose (up to 800 ms), so if you click through dates quickly, an older response can arrive last and replace the newer one. The list also keeps showing the previous day's bookings while a new day loads or after an error. `frontend/src/components/BookingList.jsx:10-31`. Fixed in PR 4: each load ignores its result if the date has changed since (`:11`, `:26-28`), and rows are only shown when they belong to the date on screen (`:31`), so a slow answer for an old day can't replace a newer one, and the old day's rows aren't shown while a new day loads or after an error.
+- **Medium**: the API trusts whatever `creator_id` it's sent, so anyone can book as anyone, and the creator wasn't added as an attendee. `backend/app/schemas.py:35`. The attendee part is fixed in PR 2 (`backend/app/routers/bookings.py:105-106`). Checking who is really making the request is still open.
 - **Medium**: nothing checks that the attendees fit in the room. `backend/app/routers/bookings.py:101-106`.
 - **Low**: checking for a clash loaded every booking the room ever had. Fixed in PR 2: only that day's bookings are loaded (`backend/app/availability.py:14`).
 - **Low**: a user's role could be any text. Fixed in PR 2: roles are a fixed list, enforced by the database too (`backend/app/models.py:23`).
@@ -80,12 +97,26 @@ Problems I found while reading the starter code, most serious first. Each one sa
 - **Low**: the 15-minute grid counts from the top of the hour, not from opening time (`backend/app/scheduling.py:57`). With today's 09:30 opening that makes no difference, but if opening time were changed to, say, 09:10, no slot would ever be suggested.
 - **Low**: bookings can be made in the past. `backend/app/routers/bookings.py:92-149`.
 - **Low**: `npm audit` reports one high and one moderate issue in vite 5 / esbuild. They only affect the local dev server. `frontend/package.json:17`. `npm audit fix --force` would jump to a new major version of vite, so I left it.
-- **Low**: the frontend only shows error messages that are plain strings, so validation errors (whose message is a list) show up as just "Request failed (422)". `frontend/src/api.js:7`. Planned for PR 4.
+- **Low**: the frontend only shows error messages that are plain strings, so validation errors (whose message is a list) show up as just "Request failed (422)". Fixed in PR 4: the error message is built from either kind of `detail`, a string or the list of validation errors, with the name of the field added where it helps (`frontend/src/api.js:11-26`). The error also carries the HTTP status (`frontend/src/api.js:3-9`), which the form uses to recognise a 409.
 - **Low**: the README setup commands were for macOS/Linux only. `README.md:18`. Fixed in PR 1: each command now has its Windows equivalent next to it.
 
 ## With more time
 
-- To be written once all four tasks are done.
+In rough order of priority, engineering first:
+
+- Hold a slot for a few minutes while someone fills in the form, so two people looking at the same suggestion don't find out only when they press Book.
+- Real sign-in, so the server knows who is booking instead of trusting the `creator_id` it is sent.
+- A database check that stops one person being in two rooms at once. Today only the app checks this.
+- Database migrations (Alembic), instead of creating tables on startup.
+- Rate limiting on the API.
+- Suggesting slots across all rooms, not one room at a time.
+- TypeScript on the frontend.
+- Frontend tests: Vitest for small pieces and Playwright for the booking journeys, so the browser checks I did by hand run on every change.
+- A "restricted" flag on rooms, instead of recognising the Board Room by its name.
+- Checking that the attendees fit in the room.
+- Refusing bookings in the past.
+
+Product ideas: sync with people's calendars, and suggest times that suit every attendee, so people stop sending emails back and forth to find a time.
 
 ## AI usage
 
@@ -107,3 +138,9 @@ Problems I found while reading the starter code, most serious first. Each one sa
 - **Where the AI was wrong:** the first race test replaced the function the router imports, to force both requests to finish their checks before either saved. If someone later changed how the router imports that function, the replacement would silently stop working and the test would pass without any race. It now uses a public SQLAlchemy event that fires right before the insert.
 - **Where the AI was wrong:** the SQLite triggers were first created only together with a brand-new table, so an existing database had no guard at all. The reviewer caught it. They are now also installed every time the app starts.
 - **A process mistake, and what I learned:** my first 30-run check against Postgres showed 13 failures, because a leftover background test run was using the same database and dropping its tables. The failures were not from the code. I found and stopped the stray run and ran the check again cleanly (30 of 30). After that I ran everything in the foreground, one run at a time.
+
+### Task 4
+
+- **How I used it:** the same set-up as Tasks 2 and 3: one Claude Code session wrote the code, and a second session that had not seen the first one's reasoning reviewed each step before it was committed. This time the coordinating session also tested the form in a real browser and saved screenshots. I approved each step.
+- **Where the AI was wrong:** the first version could freeze every Book button. If you pressed "Find slots" while "Show more" (which later became the Previous/Next pages) or a booking was still loading, the older answer was ignored before it cleared the loading state, so the buttons stayed on "Loading…" or "Booking…" for good. It could also drop the result of a booking, so a booking that went through showed no message. The reviewer found both by reading the code, after the browser run of the normal path had passed. The form is now disabled while a request runs, and a booking's outcome is always shown.
+- **Where the AI was wrong:** the frontend hard-coded "3 slots per page", copying a rule from the backend, so changing the limit there would have broken loading more slots. The reviewer caught it. The server now returns `has_more`, and the frontend no longer knows the page size.
