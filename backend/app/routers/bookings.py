@@ -4,10 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
+from ..availability import people_bookings, room_bookings
 from ..db import get_db
 from ..models import Booking, Room, User
-from ..rules import room_free_at
-from ..scheduling import overlaps
+from ..rules import DEFAULT_POLICY, duration_error, restricted_room_message, room_free_at
+from ..scheduling import Violation, slot_violations
 from ..schemas import BookingIn, BookingOut
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -32,27 +33,71 @@ def list_bookings(
     return db.scalars(query).all()
 
 
+STATUS_PRIORITY = (403, 422, 409)
+
+
+def rejections(
+    creator: User, room: Room, duration_minutes: float
+) -> dict[Violation, tuple[int, str | None]]:
+    """The (status, message) the API answers with for each rule a booking can break.
+
+    The DURATION message is only set when duration_minutes is actually invalid.
+    """
+    policy = DEFAULT_POLICY
+    return {
+        Violation.RESTRICTED_ROOM: (403, restricted_room_message(creator.name, creator.role, room.name)),
+        Violation.DURATION: (422, duration_error(duration_minutes)),
+        Violation.OFF_GRID: (422, f"start must be on a {policy.slot_step_minutes}-minute boundary"),
+        Violation.NON_WORKDAY: (422, "bookings are only allowed on working days"),
+        Violation.OUTSIDE_HOURS: (
+            422,
+            f"bookings must fall within {policy.work_start:%H:%M}-{policy.work_end:%H:%M}",
+        ),
+        Violation.LUNCH: (
+            422,
+            f"meetings over {policy.lunch_exempt_max_minutes} minutes cannot overlap lunch "
+            f"({policy.lunch_start:%H:%M}-{policy.lunch_end:%H:%M})",
+        ),
+        Violation.ROOM_BUSY: (409, "Room is already booked for that time"),
+        Violation.ATTENDEE_BUSY: (409, "An attendee is already booked at that time"),
+    }
+
+
 @router.post("", response_model=BookingOut, status_code=201)
 def create_booking(payload: BookingIn, db: Session = Depends(get_db)):
     room = db.get(Room, payload.room_id)
     if room is None:
         raise HTTPException(status_code=404, detail="Room not found")
-    if db.get(User, payload.creator_id) is None:
+    creator = db.get(User, payload.creator_id)
+    if creator is None:
         raise HTTPException(status_code=404, detail="Creator not found")
 
     attendee_ids = set(payload.attendee_ids)
     attendees = db.scalars(select(User).where(User.id.in_(attendee_ids))).all()
     if len(attendees) != len(attendee_ids):
         raise HTTPException(status_code=400, detail="Unknown attendee")
+    if creator.id not in attendee_ids:
+        attendees = [*attendees, creator]
 
-    existing = db.scalars(select(Booking).where(Booking.room_id == room.id)).all()
-    for other in existing:
-        if overlaps(other.start, other.end, payload.start, payload.end):
-            raise HTTPException(status_code=409, detail="Room is already booked for that time")
+    violations = slot_violations(
+        payload.start,
+        payload.end,
+        room_name=room.name,
+        requester_role=creator.role,
+        room_bookings=room_bookings(db, room.id, payload.start.date()),
+        people_bookings=people_bookings(db, attendee_ids | {creator.id}, payload.start.date()),
+    )
+    if violations:
+        duration_minutes = (payload.end - payload.start) / timedelta(minutes=1)
+        responses = [rejections(creator, room, duration_minutes)[v] for v in violations]
+        for status in STATUS_PRIORITY:
+            details = [message for code, message in responses if code == status]
+            if details:
+                raise HTTPException(status_code=status, detail="; ".join(details))
 
     booking = Booking(
         room_id=room.id,
-        creator_id=payload.creator_id,
+        creator_id=creator.id,
         title=payload.title,
         start=payload.start,
         end=payload.end,

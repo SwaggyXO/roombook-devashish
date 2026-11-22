@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..availability import people_bookings, room_bookings
 from ..db import get_db
 from ..models import Room, User
-from ..rules import can_book
+from ..rules import can_book, restricted_room_message
 from ..scheduling import find_slots
 from ..schemas import RoomIn, RoomOut, SlotOut, SuggestIn, SuggestOut
 
@@ -55,7 +55,7 @@ def suggest_slots(room_id: int, payload: SuggestIn, db: Session = Depends(get_db
     if not can_book(requester.role, room.name):
         raise HTTPException(
             status_code=403,
-            detail=f"{requester.name} ({requester.role.value}) can't book the {room.name}",
+            detail=restricted_room_message(requester.name, requester.role, room.name),
         )
 
     slots = find_slots(
