@@ -15,7 +15,7 @@ The task is in [ASSIGNMENT.md](ASSIGNMENT.md).
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # on Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 python -m app.seed          # resets the database and loads sample data
 uvicorn app.main:app --reload
