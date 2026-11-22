@@ -41,7 +41,8 @@ The double-booking tests also run on Postgres when `TEST_POSTGRES_URL` is set. T
 ```bash
 docker compose up -d
 export TEST_POSTGRES_URL=postgresql+psycopg://roombook:roombook@localhost:5432/roombook   # PowerShell: $env:TEST_POSTGRES_URL="postgresql+psycopg://roombook:roombook@localhost:5432/roombook"
-cd backend && python -m pytest
+cd backend
+python -m pytest
 ```
 
 Without the variable, the Postgres tests are skipped and the SQLite ones still run.

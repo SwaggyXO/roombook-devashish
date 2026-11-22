@@ -25,15 +25,13 @@ FREE_DAY = "2026-12-08"
 
 
 POSTGRES_URL = os.getenv("TEST_POSTGRES_URL")
-BACKENDS = [
-    "sqlite",
-    pytest.param(
-        "postgres",
-        marks=pytest.mark.skipif(
-            not POSTGRES_URL, reason="set TEST_POSTGRES_URL to also run against Postgres"
-        ),
+POSTGRES = pytest.param(
+    "postgres",
+    marks=pytest.mark.skipif(
+        not POSTGRES_URL, reason="set TEST_POSTGRES_URL to also run against Postgres"
     ),
-]
+)
+BACKENDS = ["sqlite", POSTGRES]
 
 
 @pytest.fixture(params=BACKENDS)
@@ -312,9 +310,9 @@ def deadlock_once_on_insert(engine):
             connection.execute(text(statement))
 
 
-@pytest.mark.parametrize("engine", [BACKENDS[1]], indirect=True)
+@pytest.mark.parametrize("engine", [POSTGRES], indirect=True)
 def test_booking_is_retried_after_postgres_reports_a_deadlock(
-    file_client, deadlock_once_on_insert
+    engine, file_client, deadlock_once_on_insert
 ):
     res = file_client.post(
         "/bookings",
@@ -328,3 +326,8 @@ def test_booking_is_retried_after_postgres_reports_a_deadlock(
         },
     )
     assert res.status_code == 201
+    with engine.connect() as connection:
+        insert_attempts = connection.scalar(
+            text("SELECT last_value FROM test_only_deadlock_once_calls")
+        )
+    assert insert_attempts == 2
