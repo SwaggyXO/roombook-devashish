@@ -2,13 +2,15 @@ from datetime import date, datetime, time, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, selectinload
 
+from .. import messages
 from ..availability import people_bookings, room_bookings
 from ..db import get_db
 from ..models import Booking, Room, User
-from ..rules import DEFAULT_POLICY, duration_error, restricted_room_message, room_free_at
-from ..scheduling import Violation, slot_violations
+from ..rules import DEFAULT_POLICY, duration_error, room_free_at
+from ..scheduling import Violation, overlaps, slot_violations
 from ..schemas import BookingIn, BookingOut
 
 router = APIRouter(prefix="/bookings", tags=["bookings"])
@@ -45,7 +47,7 @@ def rejections(
     """
     policy = DEFAULT_POLICY
     return {
-        Violation.RESTRICTED_ROOM: (403, restricted_room_message(creator.name, creator.role, room.name)),
+        Violation.RESTRICTED_ROOM: (403, messages.restricted_room(creator.name, creator.role, room.name)),
         Violation.DURATION: (422, duration_error(duration_minutes)),
         Violation.OFF_GRID: (422, f"start must be on a {policy.slot_step_minutes}-minute boundary"),
         Violation.NON_WORKDAY: (422, "bookings are only allowed on working days"),
@@ -58,8 +60,8 @@ def rejections(
             f"meetings over {policy.lunch_exempt_max_minutes} minutes cannot overlap lunch "
             f"({policy.lunch_start:%H:%M}-{policy.lunch_end:%H:%M})",
         ),
-        Violation.ROOM_BUSY: (409, "Room is already booked for that time"),
-        Violation.ATTENDEE_BUSY: (409, "An attendee is already booked at that time"),
+        Violation.ROOM_BUSY: (409, messages.ROOM_ALREADY_BOOKED),
+        Violation.ATTENDEE_BUSY: (409, messages.ATTENDEE_ALREADY_BOOKED),
     }
 
 
@@ -95,16 +97,27 @@ def create_booking(payload: BookingIn, db: Session = Depends(get_db)):
             if details:
                 raise HTTPException(status_code=status, detail="; ".join(details))
 
+    free_at = room_free_at(payload.start, payload.end)
     booking = Booking(
         room_id=room.id,
         creator_id=creator.id,
         title=payload.title,
         start=payload.start,
         end=payload.end,
-        room_free_at=room_free_at(payload.start, payload.end),
+        room_free_at=free_at,
         attendees=list(attendees),
     )
     db.add(booking)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        room_is_taken = any(
+            overlaps(payload.start, free_at, other.start, other.room_free_at)
+            for other in room_bookings(db, room.id, payload.start.date())
+        )
+        if not room_is_taken:
+            raise
+        raise HTTPException(status_code=409, detail=messages.ROOM_ALREADY_BOOKED)
     db.refresh(booking)
     return booking

@@ -1,9 +1,11 @@
 from datetime import datetime
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Table
+from sqlalchemy import Column, DateTime, ForeignKey, String, Table, event, text
 from sqlalchemy import Enum as SAEnum
+from sqlalchemy.engine import Connection, Engine
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from . import messages
 from .db import Base
 from .roles import Role
 
@@ -55,3 +57,52 @@ class Booking(Base):
     room: Mapped[Room] = relationship()
     creator: Mapped[User] = relationship()
     attendees: Mapped[list[User]] = relationship(secondary=booking_attendees)
+
+
+_BOOKING_GUARDS = (
+    ("bookings_no_room_overlap_insert", "INSERT", ""),
+    ("bookings_no_room_overlap_update", "UPDATE OF room_id, start, room_free_at", "AND id != NEW.id"),
+)
+
+_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS {name} BEFORE {trigger_event} ON bookings FOR EACH ROW
+BEGIN
+    SELECT RAISE(ABORT, '{message}')
+    WHERE EXISTS (
+        SELECT 1 FROM bookings
+        WHERE room_id = NEW.room_id
+          AND start < NEW.room_free_at
+          AND NEW.start < room_free_at
+          {other_rows_only}
+    );
+END
+"""
+
+
+def install_booking_guards(connection: Connection) -> None:
+    """SQLite has no exclusion constraints, so triggers refuse overlapping room windows instead."""
+    for name, trigger_event, other_rows_only in _BOOKING_GUARDS:
+        connection.execute(
+            text(
+                _TRIGGER.format(
+                    name=name,
+                    trigger_event=trigger_event,
+                    message=messages.ROOM_ALREADY_BOOKED,
+                    other_rows_only=other_rows_only,
+                )
+            )
+        )
+
+
+@event.listens_for(Booking.__table__, "after_create")
+def _install_guards_on_create(target, connection, **kwargs):
+    if connection.dialect.name == "sqlite":
+        install_booking_guards(connection)
+
+
+def create_schema(engine: Engine) -> None:
+    """Create missing tables, and add the guards to databases created before they existed."""
+    Base.metadata.create_all(bind=engine)
+    if engine.dialect.name == "sqlite":
+        with engine.begin() as connection:
+            install_booking_guards(connection)
