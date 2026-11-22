@@ -34,6 +34,26 @@ python -m app.seed
 uvicorn app.main:app --reload
 ```
 
+### Running the tests against PostgreSQL
+
+The double-booking tests also run on Postgres when `TEST_POSTGRES_URL` is set. They drop and recreate the tables in the database that variable points at, so running them against your dev database wipes its data (re-run `python -m app.seed` afterwards).
+
+```bash
+docker compose up -d
+export TEST_POSTGRES_URL=postgresql+psycopg://roombook:roombook@localhost:5432/roombook   # PowerShell: $env:TEST_POSTGRES_URL="postgresql+psycopg://roombook:roombook@localhost:5432/roombook"
+cd backend
+python -m pytest
+```
+
+Without the variable, the Postgres tests are skipped and the SQLite ones still run.
+
+If a Postgres is already running on your machine, it may be using port 5432 and the container will be unreachable (you'll see "password authentication failed"). Start the container on another port and use that port in the URL:
+
+```bash
+docker run -d --name roombook-test-pg -p 5433:5432 -e POSTGRES_USER=roombook -e POSTGRES_PASSWORD=roombook -e POSTGRES_DB=roombook postgres:16
+# then use ...@localhost:5433/roombook in TEST_POSTGRES_URL
+```
+
 ### Settings
 
 | Variable | Default | Meaning |

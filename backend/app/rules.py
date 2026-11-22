@@ -57,7 +57,3 @@ def duration_error(minutes: float, policy: Policy = DEFAULT_POLICY) -> str | Non
     if minutes % policy.duration_step_minutes:
         return f"duration must be a multiple of {policy.duration_step_minutes} minutes"
     return None
-
-
-def restricted_room_message(user_name: str, role: Role, room_name: str) -> str:
-    return f"{user_name} ({role.value}) can't book the {room_name}"

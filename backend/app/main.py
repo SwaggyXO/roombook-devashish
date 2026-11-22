@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import models  # noqa: F401  (registers tables)
-from .db import Base, engine
+from .db import engine
 from .latency import SimulatedLatencyMiddleware
 from .routers import bookings, rooms, users
 
@@ -14,7 +14,7 @@ SIMULATED_LATENCY_MS = int(os.getenv("SIMULATED_LATENCY_MS", "800"))
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    Base.metadata.create_all(bind=engine)
+    models.create_schema(engine)
     yield
 
 
