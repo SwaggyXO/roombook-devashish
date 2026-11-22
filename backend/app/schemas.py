@@ -80,3 +80,4 @@ class SlotOut(BaseModel):
 
 class SuggestOut(BaseModel):
     slots: list[SlotOut]
+    has_more: bool

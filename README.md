@@ -103,13 +103,13 @@ Open http://localhost:5173. The dev server proxies `/api/*` to the backend on po
 
 | Method | Path | Notes |
 |---|---|---|
-| GET | `/rooms` | |
+| GET | `/rooms` | Optional `user_id` adds `bookable` to each room for that user; `404` if the user is unknown |
 | GET | `/rooms/{id}` | |
 | POST | `/rooms` | `{name, capacity}` |
 | GET | `/users` | |
 | GET | `/bookings?date=YYYY-MM-DD&room_id=` | Both filters optional |
 | POST | `/bookings` | `{room_id, creator_id, title, attendee_ids, start, end}`; the creator is added as an attendee. Returns `403` for a restricted room, `422` for a broken office rule, `409` if the room or an attendee is busy |
-| POST | `/rooms/{id}/suggest` | `{requester_id, attendee_ids, duration_minutes, date}`; returns up to 3 earliest valid `{start, end}` slots that day. `403` if the requester can't book the room |
+| POST | `/rooms/{id}/suggest` | `{requester_id, attendee_ids, duration_minutes, date, after?}`; returns `{slots, has_more}`: up to 3 earliest valid `{start, end}` slots that day, and whether more follow. With `after` (a time such as one a slot returned), only slots starting later are returned. `403` if the requester can't book the room |
 
 ### Examples
 

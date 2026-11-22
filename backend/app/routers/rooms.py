@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -7,7 +9,7 @@ from .. import messages
 from ..availability import people_bookings, room_bookings
 from ..db import get_db
 from ..models import Room, User
-from ..rules import can_book
+from ..rules import DEFAULT_POLICY, can_book
 from ..scheduling import find_slots
 from ..schemas import RoomAccessOut, RoomIn, RoomOut, SlotOut, SuggestIn, SuggestOut
 
@@ -70,6 +72,7 @@ def suggest_slots(room_id: int, payload: SuggestIn, db: Session = Depends(get_db
             detail=messages.restricted_room(requester.name, requester.role, room.name),
         )
 
+    limit = DEFAULT_POLICY.suggestion_limit
     slots = find_slots(
         payload.date,
         payload.duration_minutes,
@@ -78,5 +81,9 @@ def suggest_slots(room_id: int, payload: SuggestIn, db: Session = Depends(get_db
         after=payload.after,
         room_bookings=room_bookings(db, room.id, payload.date),
         people_bookings=people_bookings(db, attendee_ids | {requester.id}, payload.date),
+        policy=replace(DEFAULT_POLICY, suggestion_limit=limit + 1),
     )
-    return SuggestOut(slots=[SlotOut(start=start, end=end) for start, end in slots])
+    return SuggestOut(
+        slots=[SlotOut(start=start, end=end) for start, end in slots[:limit]],
+        has_more=len(slots) > limit,
+    )
