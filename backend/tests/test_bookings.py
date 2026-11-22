@@ -44,6 +44,21 @@ def test_overlapping_booking_is_rejected(client):
     assert res.status_code == 409
 
 
+def test_back_to_back_booking_is_allowed(client):
+    # The seeded "Standup sync" uses room 3 from 11:45 to 12:15, so this booking starts right as it ends.
+    res = client.post(
+        "/bookings",
+        json={
+            "room_id": 3,
+            "creator_id": 1,
+            "attendee_ids": [1],
+            "start": "2026-12-07T12:15:00",
+            "end": "2026-12-07T12:45:00",
+        },
+    )
+    assert res.status_code == 201
+
+
 def test_end_must_be_after_start(client):
     res = client.post(
         "/bookings",
