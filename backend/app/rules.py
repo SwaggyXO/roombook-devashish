@@ -46,3 +46,14 @@ def room_free_at(start: datetime, end: datetime, policy: Policy = DEFAULT_POLICY
 
 def can_book(role: Role, room_name: str, policy: Policy = DEFAULT_POLICY) -> bool:
     return (room_name, role) not in policy.restricted
+
+
+def duration_error(minutes: float, policy: Policy = DEFAULT_POLICY) -> str | None:
+    if not policy.min_duration_minutes <= minutes <= policy.max_duration_minutes:
+        return (
+            f"duration must be between {policy.min_duration_minutes} "
+            f"and {policy.max_duration_minutes} minutes"
+        )
+    if minutes % policy.duration_step_minutes:
+        return f"duration must be a multiple of {policy.duration_step_minutes} minutes"
+    return None

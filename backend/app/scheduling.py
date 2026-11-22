@@ -3,7 +3,7 @@ from enum import StrEnum
 from typing import Protocol, Sequence
 
 from .roles import Role
-from .rules import DEFAULT_POLICY, Policy, can_book, room_free_at
+from .rules import DEFAULT_POLICY, Policy, can_book, duration_error, room_free_at
 
 
 def overlaps(a_start: datetime, a_end: datetime, b_start: datetime, b_end: datetime) -> bool:
@@ -51,10 +51,7 @@ def slot_violations(
     violations = []
     duration = end - start
 
-    step = timedelta(minutes=policy.duration_step_minutes)
-    min_duration = timedelta(minutes=policy.min_duration_minutes)
-    max_duration = timedelta(minutes=policy.max_duration_minutes)
-    if duration % step or not min_duration <= duration <= max_duration:
+    if duration_error(duration / timedelta(minutes=1), policy):
         violations.append(Violation.DURATION)
 
     if start.minute % policy.slot_step_minutes or start.second or start.microsecond:
